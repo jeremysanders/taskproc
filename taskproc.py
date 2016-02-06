@@ -8,27 +8,43 @@ except ImportError:
     # python 2.x
     import Queue as queue
 
-class DepExError(RuntimeError):
+class TaskProcError(RuntimeError):
     """Exception raised if error encountered in this module."""
     pass
 
 class Task:
+    """A Task is a unit of work.
+
+    Tasks are run by calling the run() method which by default calls
+    the func passed to the constructor.
+
+    Tasks can require other tasks, by passing them in requires when
+    constructing, or by using add_requirement. This constructs a tree
+    or graph of tasks.
+
+    Members:
+    arg: list of results preduced by tasks that this task requires
+    func: function to call if set
+    args: extra arguments to func
+    kwargs: extra keyword arguments to func
+    pending: set of tasks which require this task
+    """
+
+    # use empty to mark empty results as None is a valid result
     class _Empty():
         pass
     empty = _Empty()
 
     def __init__(self, func=None, requires=[], args=(), kwargs={}):
-        """Task object.
+        """Construct Task
 
-        Tasks require other tasks (specified in requires or see
-        add_requirement)
-
-        func is an optional function to call, taking at least one
-        argument, which is the list of the results of all the tasks
-        which are required.
+        func: optional function to call, taking at least one argument
+        (plus optionally given args and kwargs). The parameter is the
+        list of the results of all required tasks (in order given).
 
         args: arguments appended to task function call
         kwargs: keyword arguments appended to task function call.
+
         """
 
         # keep track of tasks we require first. These are mapped to
@@ -36,15 +52,15 @@ class Task:
         self.requires = {}
         for i, req in enumerate(requires):
             if req in self.requires:
-                raise DepExError("Duplicate requirement found")
+                raise TaskProcError("Duplicate requirement found")
             else:
                 self.requires[req] = i
 
         # these are the Tasks which require this task
-        self.requiredfor = set()
+        self.pending = set()
 
         # results from our requirements
-        self.reqresults = [Task.empty]*len(requires)
+        self.arg = [Task.empty]*len(requires)
 
         # function to call
         self.func = func
@@ -55,23 +71,28 @@ class Task:
 
         # requirements need to know we require them
         for rq in requires:
-            rq.requiredfor.add(self)
+            rq.pending.add(self)
 
     def add_requirement(self, req):
         """Add a reqirement to this task."""
         if req in self.requires:
-            raise DepExError("Duplicate requirement found")
+            raise TaskProcError("Duplicate requirement found")
 
-        self.requires[req] = len(self.reqresults)
-        self.reqresults.append(Task.empty)
-        req.requiredfor.add(self)
+        self.requires[req] = len(self.arg)
+        self.arg.append(Task.empty)
+        req.pending.add(self)
 
     def run(self):
-        """Caled when task is run. Optionally override this."""
+        """Caled when task is run. Optionally override this.
+
+        By default runs self.func(arg, *self.args, **self.kwargs)
+        """
         if self.func is not None:
-            return self.func(self.reqresults, *self.args, **self.kwargs)
+            return self.func(self.arg, *self.args, **self.kwargs)
 
 class BaseTaskQueue:
+    """Base class for other task queue types."""
+
     def __init__(self):
         # items to process
         self.queue = queue.Queue()
@@ -81,7 +102,7 @@ class BaseTaskQueue:
     def add(self, task):
         """Add task to queue to be processed."""
         if task.requires:
-            raise DepExError(
+            raise TaskProcError(
                 "Cannot add tasks with unmet dependencies")
         self.pending.add(task)
         self.queue.put(task)
@@ -94,11 +115,11 @@ class BaseTaskQueue:
         """Process all items in queue.
 
         abortpending: if there are encountered tasks with unsatisfied
-        dependencies at the end, raise a DepExError
+        dependencies at the end, raise a TaskProcError
         """
         self._process_queue()
         if self.pending and abortpending:
-            raise DepExError(
+            raise TaskProcError(
                 "Pending tasks with unsatisfied dependencies remain in queue")
 
     def __enter__(self):
@@ -123,23 +144,23 @@ class TaskQueueSingle(BaseTaskQueue):
         self.pending.remove(task)
 
         # for tasks which require this task
-        for reqfor in task.requiredfor:
+        for pendtask in task.pending:
             # add to pending
-            self.pending.add(reqfor)
+            self.pending.add(pendtask)
 
             # update their results entry with our results
-            residx = reqfor.requires[task]
-            reqfor.reqresults[residx] = retn
+            residx = pendtask.requires[task]
+            pendtask.arg[residx] = retn
 
             # remove ourselves from their requirements
-            del reqfor.requires[task]
+            del pendtask.requires[task]
 
             # if they have empty requirements, add to tasks to run
-            if not reqfor.requires:
-                self.queue.put(reqfor)
+            if not pendtask.requires:
+                self.queue.put(pendtask)
 
         # avoid dependency loops
-        task.requiredfor.clear()
+        task.pending.clear()
 
         self.queue.task_done()
 
@@ -234,26 +255,26 @@ class TaskQueueThread(BaseTaskQueue):
             self.pending.remove(task)
 
             # for tasks which require this task
-            for reqfor in task.requiredfor:
+            for pendtask in task.pending:
                 # add to pending
-                self.pending.add(reqfor)
+                self.pending.add(pendtask)
 
                 # update their results entry with our results
-                residx = reqfor.requires[task]
-                reqfor.reqresults[residx] = retn
+                residx = pendtask.requires[task]
+                pendtask.arg[residx] = retn
 
-                # without lock, then reqfor could be added twice to
+                # without lock, then pendtask could be added twice to
                 # the queue
                 with self.reslock:
                     # remove ourselves from their requirements
-                    del reqfor.requires[task]
+                    del pendtask.requires[task]
 
                     # if they have empty requirements, add to tasks to run
-                    if not reqfor.requires:
-                        self.queue.put(reqfor)
+                    if not pendtask.requires:
+                        self.queue.put(pendtask)
 
             # avoid dependency loops
-            task.requiredfor.clear()
+            task.pending.clear()
 
             # tell queue that we're done and it's safe to exit if all
             # items have been processed
@@ -266,42 +287,58 @@ class TaskQueueThread(BaseTaskQueue):
         """Wait until queue is empty."""
         self.queue.join()
 
-def func(res, i):
-    s = str((i, res))
-    print(s[:79])
-    return i
+###########################################################################
+## Self test below
 
-def main():
+def testqueue(taskqueue):
+    """Test that the queue produces the right results in the right order."""
+
+    import hashlib
+
+    def testfunc(res, i):
+        """Return a hash of the index plus the other results."""
+        m = hashlib.md5()
+        m.update(str(i).encode('utf-8'))
+        for r in res:
+            m.update(r.encode('utf-8'))
+        return m.hexdigest()
+
+    # make a set of tasks which depend on random-like other tasks
     tasks = []
     for i in range(1000):
         requires = set()
         if len(tasks)>0:
+            # always depend on the first task
             requires = [tasks[0]]
             for j in range(min(20, len(tasks)-1)):
                 t = tasks[(j*412591231+13131) % len(tasks)]
                 if t not in requires:
                     requires.append(t)
 
-        task = Task(func=func, args=(i,), requires=requires)
+        task = Task(func=testfunc, args=(i,), requires=requires)
         tasks.append(task)
 
-    finaltask = Task(func=func, args=(0,), requires=tasks)
+    # this task depends on everything
+    finaltask = Task(func=testfunc, args=(0,), requires=tasks)
 
-    #q = TaskQueueSingle()
-    q = TaskQueueThread(4)
-    q.add(tasks[0])
-    with q:
-        q.process(abortpending=True)
+    taskqueue.add(tasks[0])
+    with taskqueue:
+        taskqueue.process(abortpending=True)
 
-    import hashlib
+    # this is a hash of all the previous results
     m = hashlib.md5()
-    m.update(str(finaltask.reqresults).encode('utf-8'))
+    for v in finaltask.arg:
+        m.update(v.encode('utf-8'))
     digest = m.hexdigest()
 
-    if digest != '52a67e4dd3d129b5b15daab989ad7af9':
+    if digest != 'f77e8e0478e1bc41fdfeaef65ebb3c6d':
         raise RuntimeError('Self test did not produce correct result')
-    else:
-        print('Test success')
+
+def runtest():
+    """Test the different kinds of queue."""
+    testqueue(TaskQueueSingle())
+    testqueue(TaskQueueThread(4))
+    print('Test success')
 
 if __name__ == "__main__":
-    main()
+    runtest()
