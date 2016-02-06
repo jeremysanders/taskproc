@@ -71,11 +71,10 @@ class Task:
         if self.func is not None:
             return self.func(self.reqresults, *self.args, **self.kwargs)
 
-class TaskQueue:
+class BaseTaskQueue:
     def __init__(self):
         # items to process
         self.queue = queue.Queue()
-
         # tasks we have encountered, but have not processed
         self.pending = set()
 
@@ -108,8 +107,8 @@ class TaskQueue:
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
-class TaskQueueSingle(TaskQueue):
-    """Simple queue where items are processed in this thread."""
+class TaskQueueSingle(BaseTaskQueue):
+    """Simple queue where items are processed in the main thread."""
 
     def _process_next(self):
         task = self.queue.get()
@@ -149,7 +148,9 @@ class TaskQueueSingle(TaskQueue):
         while not self.queue.empty():
             self._process_next()
 
-class TaskQueueThread(TaskQueue):
+class TaskQueueThread(BaseTaskQueue):
+    """A queue of tasks to run which uses multiple threads."""
+
     def __init__(self, nthreads, onstart=None, onend=None):
         """Initialise task processing queue using threads.
 
@@ -158,7 +159,7 @@ class TaskQueueThread(TaskQueue):
         onend: optional function to call on thread end
         """
 
-        TaskQueue.__init__(self)
+        BaseTaskQueue.__init__(self)
         self.onstart = onstart
         self.onend = onend
 
@@ -265,29 +266,42 @@ class TaskQueueThread(TaskQueue):
         """Wait until queue is empty."""
         self.queue.join()
 
-import time
 def func(res, i):
-    print(res, i)
-    time.sleep(0.2)
+    s = str((i, res))
+    print(s[:79])
     return i
 
-import random
 def main():
     tasks = []
     for i in range(1000):
-        requires = random.sample(tasks, random.randint(0, min(len(tasks), 20)))
-        # make sure the requirements are all connected
-        if len(tasks) > 0:
-            if tasks[0] not in requires:
-                requires.append(tasks[0])
+        requires = set()
+        if len(tasks)>0:
+            requires = [tasks[0]]
+            for j in range(min(20, len(tasks)-1)):
+                t = tasks[(j*412591231+13131) % len(tasks)]
+                if t not in requires:
+                    requires.append(t)
+
         task = Task(func=func, args=(i,), requires=requires)
         tasks.append(task)
 
+    finaltask = Task(func=func, args=(0,), requires=tasks)
+
     #q = TaskQueueSingle()
-    q = TaskQueueThread(4, onstart=lambda: print("start"))
+    q = TaskQueueThread(4)
     q.add(tasks[0])
     with q:
         q.process(abortpending=True)
+
+    import hashlib
+    m = hashlib.md5()
+    m.update(str(finaltask.reqresults).encode('utf-8'))
+    digest = m.hexdigest()
+
+    if digest != '52a67e4dd3d129b5b15daab989ad7af9':
+        raise RuntimeError('Self test did not produce correct result')
+    else:
+        print('Test success')
 
 if __name__ == "__main__":
     main()
