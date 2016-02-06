@@ -8,7 +8,15 @@ except ImportError:
     # python 2.x
     import Queue as queue
 
+class DepExError(RuntimeError):
+    """Exception raised if error encountered in this module."""
+    pass
+
 class Task:
+    class _Empty():
+        pass
+    empty = _Empty()
+
     def __init__(self, func=None, requires=[], args=(), kwargs={}):
         """Task object.
 
@@ -24,14 +32,19 @@ class Task:
         """
 
         # keep track of tasks we require first. These are mapped to
-        # indices into the return result array
-        self.requires = {req: i for i, req in enumerate(requires)}
+        # indices into the return result array to preserve ordering
+        self.requires = {}
+        for i, req in enumerate(requires):
+            if req in self.requires:
+                raise DepExError("Duplicate requirement found")
+            else:
+                self.requires[req] = i
 
         # these are the Tasks which require this task
         self.requiredfor = set()
 
         # results from our requirements
-        self.reqresults = [None]*len(requires)
+        self.reqresults = [Task.empty]*len(requires)
 
         # function to call
         self.func = func
@@ -46,18 +59,17 @@ class Task:
 
     def add_requirement(self, req):
         """Add a reqirement to this task."""
+        if req in self.requires:
+            raise DepExError("Duplicate requirement found")
+
         self.requires[req] = len(self.reqresults)
-        self.reqresults.append(None)
+        self.reqresults.append(Task.empty)
         req.requiredfor.add(self)
 
     def run(self):
         """Caled when task is run. Optionally override this."""
         if self.func is not None:
             return self.func(self.reqresults, *self.args, **self.kwargs)
-
-class TaskQueueError(RuntimeError):
-    """Exception raised if error encountered in queuing."""
-    pass
 
 class TaskQueue:
     def __init__(self):
@@ -67,10 +79,10 @@ class TaskQueue:
         # tasks we have encountered, but have not processed
         self.pending = set()
 
-    def add_task(self, task):
+    def add(self, task):
         """Add task to queue to be processed."""
         if task.requires:
-            raise TaskQueueError(
+            raise DepExError(
                 "Cannot add tasks with unmet dependencies")
         self.pending.add(task)
         self.queue.put(task)
@@ -83,11 +95,11 @@ class TaskQueue:
         """Process all items in queue.
 
         abortpending: if there are encountered tasks with unsatisfied
-        dependencies at the end, raise a TaskQueueError
+        dependencies at the end, raise a DepExError
         """
         self._process_queue()
         if self.pending and abortpending:
-            raise TaskQueueError(
+            raise DepExError(
                 "Pending tasks with unsatisfied dependencies remain in queue")
 
     def __enter__(self):
@@ -171,6 +183,7 @@ class TaskQueueThread(TaskQueue):
             raise QueueError("start() can only be called once")
 
         for t in self.threads:
+            t.daemon = True
             t.start()
         self.started = True
 
@@ -196,7 +209,8 @@ class TaskQueueThread(TaskQueue):
 
     def __exit__(self, exc_type, exc_value, traceback):
         """End procesing threads."""
-        self.end()
+        if self.started:
+            self.end()
 
     def _run_thread(self):
         """Repeat processing queue until None is received."""
@@ -252,41 +266,27 @@ class TaskQueueThread(TaskQueue):
         self.queue.join()
 
 import time
-def ft1(x):
-    print("t1", x)
-    time.sleep(5)
-    return 1
+def func(res, i):
+    print(res, i)
+    time.sleep(0.2)
+    return i
 
-def ft2a(x):
-    print("t2a", x)
-    time.sleep(4)
-    return 2
-def ft2b(x):
-    print("t2b", x)
-    time.sleep(4)
-    return 2.5
-
-def ft3(x):
-    print("t3", x)
-    time.sleep(6)
-    return 3
-def ft4(x):
-    print("t4", x)
-    time.sleep(1)
-
-    return 42
-
+import random
 def main():
-    t1 = Task(func=ft1)
-    t2a = Task(func=ft2a, requires=[t1])
-    t2b = Task(func=ft2b, requires=[t1])
-    t3 = Task(func=ft3, requires=[t2a, t1])
-    t4 = Task(func=ft4, requires=[t2b, t1])
-    t3.add_requirement(t2b)
-    q = TaskQueueSingle()
-    #q = TaskQueueThread(1, onstart=lambda: print("start"))
+    tasks = []
+    for i in range(1000):
+        requires = random.sample(tasks, random.randint(0, min(len(tasks), 20)))
+        # make sure the requirements are all connected
+        if len(tasks) > 0:
+            if tasks[0] not in requires:
+                requires.append(tasks[0])
+        task = Task(func=func, args=(i,), requires=requires)
+        tasks.append(task)
+
+    #q = TaskQueueSingle()
+    q = TaskQueueThread(4, onstart=lambda: print("start"))
+    q.add(tasks[0])
     with q:
-        q.add_task(t1)
         q.process(abortpending=True)
 
 if __name__ == "__main__":
