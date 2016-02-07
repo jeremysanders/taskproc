@@ -29,19 +29,25 @@ class TaskProcError(RuntimeError):
 class Task:
     """A Task is a unit of work.
 
-    Tasks are run by calling the run() method which by default calls
-    the func passed to the constructor.
+    Tasks are run by calling the run() method, which by default calls
+    the callable func passed to the constructor.
 
     Tasks can require other tasks, by passing them in requires when
     constructing, or by using add_requirement. This constructs a tree
     or graph of tasks.
 
     Members:
-    reqresults: list of results preduced by tasks that this task requires
     func: function to call if set
     args: extra arguments to func
     kwargs: extra keyword arguments to func
+
+    The following members should not be modified:
+
+    requires: remaining list of tasks required by this task
+    reqresults: filled list of results preduced by tasks that
+                this task requires
     pending: set of tasks which require this task
+
     """
 
     # use empty to mark empty results as None is a valid result
@@ -52,9 +58,10 @@ class Task:
     def __init__(self, func=None, requires=[], args=(), kwargs={}):
         """Construct Task
 
-        func: optional function to call, taking at least one argument
-        (plus optionally given args and kwargs). The parameter is the
-        list of the results of all required tasks (in order given).
+        func: optional function to call. This function receives as its
+              parameter a list of the results of all of its
+              requirements. Optionally arguments args and keyword
+              arguments kwargs are also parameters.
 
         args: arguments appended to task function call
         kwargs: keyword arguments appended to task function call.
@@ -70,7 +77,7 @@ class Task:
             else:
                 self.requires[req] = i
 
-        # these are the Tasks which require this task
+        # these are the Tasks pending on this task
         self.pending = set()
 
         # results from our requirements
@@ -100,7 +107,7 @@ class Task:
         return '<%s>' % (', '.join(parts))
 
     def add_requirement(self, req):
-        """Add a reqirement to this task."""
+        """Add a requirement task to this task."""
         if req in self.requires:
             raise TaskProcError("Duplicate requirement found")
 
@@ -109,7 +116,7 @@ class Task:
         req.pending.add(self)
 
     def run(self):
-        """Caled when task is run. Optionally override this.
+        """Called when task is run. Optionally override this.
 
         By default runs self.func(reqresults, *self.args, **self.kwargs)
         """
@@ -124,24 +131,27 @@ class BaseTaskQueue:
         self.queue = queue.Queue()
         # tasks we have encountered, but have not processed
         self.pending = set()
+        # lock tree when adding new entries or returning results
+        self.treelock = threading.Lock()
 
     def add(self, task):
         """Add task to queue to be processed."""
 
-        # Recursively build up queue of edge nodes. Written as a loop
-        # to avoid recursion limits.
-        stack = [task]
-        while stack:
-            t = stack.pop()
-            if t not in self.pending:
-                # examine tasks which haven't been encountered before
-                self.pending.add(t)
-                if t.requires:
-                    # further nodes to process
-                    stack += t.requires
-                else:
-                    # add edge nodes to queue
-                    self.queue.put(t)
+        with self.treelock:
+            # Recursively build up queue of edge nodes. Written as a loop
+            # to avoid recursion limits.
+            stack = [task]
+            while stack:
+                t = stack.pop()
+                if t not in self.pending:
+                    # examine tasks which haven't been encountered before
+                    self.pending.add(t)
+                    if t.requires:
+                        # further nodes to process
+                        stack += t.requires
+                    else:
+                        # add edge nodes to queue
+                        self.queue.put(t)
 
     def _process_queue(self):
         """Overridden in subclasses."""
@@ -151,7 +161,8 @@ class BaseTaskQueue:
         """Process all items in queue.
 
         abortpending: if there are encountered tasks with unsatisfied
-        dependencies at the end, raise a TaskProcError
+                      dependencies at the end, raise a TaskProcError
+
         """
         self._process_queue()
         if self.pending and abortpending:
@@ -223,9 +234,6 @@ class TaskQueueThread(BaseTaskQueue):
         # have threads started?
         self.started = False
 
-        # lock used in processing results
-        self.reslock = threading.Lock()
-
         # special end value
         self.done = object()
 
@@ -285,23 +293,23 @@ class TaskQueueThread(BaseTaskQueue):
             # do the work of the task
             retn = task.run()
 
-            # Remove from set of all tasks to run. Should be
-            # thread-safe as task won't get added again if it is
-            # queued
-            self.pending.remove(task)
+            # Below is all locked to avoid any problems if add is
+            # called. Finer-grained locking appeared to be slower.
+            with self.treelock:
+                # remove from set of all tasks to run
+                self.pending.remove(task)
 
-            # for tasks which require this task
-            for pendtask in task.pending:
-                # add to pending
-                self.pending.add(pendtask)
+                # for tasks which require this task
+                for pendtask in task.pending:
+                    # add to pending
+                    self.pending.add(pendtask)
 
-                # update their results entry with our results
-                residx = pendtask.requires[task]
-                pendtask.reqresults[residx] = retn
+                    # update their results entry with our results
+                    residx = pendtask.requires[task]
+                    pendtask.reqresults[residx] = retn
 
-                # without lock, then pendtask could be added twice to
-                # the queue
-                with self.reslock:
+                    # without lock, then pendtask could be added twice to
+                    # the queue
                     # remove ourselves from their requirements
                     del pendtask.requires[task]
 
@@ -309,7 +317,8 @@ class TaskQueueThread(BaseTaskQueue):
                     if not pendtask.requires:
                         self.queue.put(pendtask)
 
-            # avoid dependency loops
+            # avoid dependency loops by removing references to other
+            # tasks
             task.pending.clear()
 
             # tell queue that we're done and it's safe to exit if all
@@ -341,7 +350,7 @@ def testqueue(taskqueue):
 
     # make a set of tasks which depend on random-like other tasks
     tasks = []
-    for i in xrange(1000):
+    for i in range(1000):
         requires = []
         if len(tasks)>0:
             # always depend on the first task
