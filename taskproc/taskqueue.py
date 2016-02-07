@@ -1,11 +1,11 @@
 #   Copyright 2016 Jeremy Sanders
-
+#
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
 #   You may obtain a copy of the License at
-
+#
 #       http://www.apache.org/licenses/LICENSE-2.0
-
+#
 #   Unless required by applicable law or agreed to in writing, software
 #   distributed under the License is distributed on an "AS IS" BASIS,
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,6 +22,8 @@ try:
 except ImportError:
     # python 2.x
     import Queue as queue
+
+from .common import TaskProcError
 
 class BaseTaskQueue:
     """Base class for other task queue types."""
@@ -166,7 +168,7 @@ class TaskQueueThread(BaseTaskQueue):
         a `with` statement should be used."""
 
         if self.started is not False:
-            raise QueueError("start() can only be called once")
+            raise TaskProcError("start() can only be called once")
 
         for t in self.threads:
             t.daemon = True
@@ -250,60 +252,3 @@ class TaskQueueThread(BaseTaskQueue):
     def _process_queue(self):
         """Wait until queue is empty."""
         self.queue.join()
-
-###########################################################################
-## Self test below
-
-def testqueue(taskqueue):
-    """Test that the queue produces the right results in the right order."""
-
-    from task import Task
-    import hashlib
-
-    def testfunc(res, i):
-        """Return a hash of the index plus the other results."""
-        m = hashlib.md5()
-        m.update(str(i).encode('utf-8'))
-        for r in res:
-            m.update(r.encode('utf-8'))
-        return m.hexdigest()
-
-    # make a set of tasks which depend on random-like other tasks
-    tasks = []
-    for i in range(1000):
-        requires = []
-        if len(tasks)>0:
-            # always depend on the first task
-            requires.append(tasks[0])
-            for j in range(min(20, len(tasks)-1)):
-                t = tasks[(j*412591231+13131) % len(tasks)]
-                if t not in requires:
-                    requires.append(t)
-
-        task = Task(func=testfunc, args=(i,), requires=requires)
-        tasks.append(task)
-
-    # this task depends on everything
-    finaltask = Task(func=testfunc, args=(0,), requires=tasks)
-
-    taskqueue.add(finaltask)
-    with taskqueue:
-        taskqueue.process()
-
-    # this is a hash of all the previous results
-    m = hashlib.md5()
-    for v in finaltask.reqresults:
-        m.update(v.encode('utf-8'))
-    digest = m.hexdigest()
-
-    if digest != 'f77e8e0478e1bc41fdfeaef65ebb3c6d':
-        raise RuntimeError('Self test did not produce correct result')
-
-def runtest():
-    """Test the different kinds of queue."""
-    testqueue(TaskQueue())
-    testqueue(TaskQueueThread(4))
-    print('Test success')
-
-if __name__ == "__main__":
-    runtest()
