@@ -1,3 +1,17 @@
+#   Copyright 2016 Jeremy Sanders
+
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+
+#       http://www.apache.org/licenses/LICENSE-2.0
+
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 from __future__ import print_function
 import threading
 
@@ -23,7 +37,7 @@ class Task:
     or graph of tasks.
 
     Members:
-    arg: list of results preduced by tasks that this task requires
+    reqresults: list of results preduced by tasks that this task requires
     func: function to call if set
     args: extra arguments to func
     kwargs: extra keyword arguments to func
@@ -60,7 +74,7 @@ class Task:
         self.pending = set()
 
         # results from our requirements
-        self.arg = [Task.empty]*len(requires)
+        self.reqresults = [Task.empty]*len(requires)
 
         # function to call
         self.func = func
@@ -73,22 +87,34 @@ class Task:
         for rq in requires:
             rq.pending.add(self)
 
+    def __repr__(self):
+        """Brief description of Task."""
+        parts = ['%s at 0x%x' % (self.__class__.__name__, id(self))]
+        if self.func is not None:
+            parts.append('func=%s' % repr(self.func))
+        if self.args:
+            parts.append('args=%s' % repr(self.args))
+        if self.kwargs:
+            parts.append('kwargs=%s' % repr(self.kwargs))
+
+        return '<%s>' % (', '.join(parts))
+
     def add_requirement(self, req):
         """Add a reqirement to this task."""
         if req in self.requires:
             raise TaskProcError("Duplicate requirement found")
 
-        self.requires[req] = len(self.arg)
-        self.arg.append(Task.empty)
+        self.requires[req] = len(self.reqresults)
+        self.reqresults.append(Task.empty)
         req.pending.add(self)
 
     def run(self):
         """Caled when task is run. Optionally override this.
 
-        By default runs self.func(arg, *self.args, **self.kwargs)
+        By default runs self.func(reqresults, *self.args, **self.kwargs)
         """
         if self.func is not None:
-            return self.func(self.arg, *self.args, **self.kwargs)
+            return self.func(self.reqresults, *self.args, **self.kwargs)
 
 class BaseTaskQueue:
     """Base class for other task queue types."""
@@ -101,11 +127,21 @@ class BaseTaskQueue:
 
     def add(self, task):
         """Add task to queue to be processed."""
-        if task.requires:
-            raise TaskProcError(
-                "Cannot add tasks with unmet dependencies")
-        self.pending.add(task)
-        self.queue.put(task)
+
+        # Recursively build up queue of edge nodes. Written as a loop
+        # to avoid recursion limits.
+        stack = [task]
+        while stack:
+            t = stack.pop()
+            if t not in self.pending:
+                # examine tasks which haven't been encountered before
+                self.pending.add(t)
+                if t.requires:
+                    # further nodes to process
+                    stack += t.requires
+                else:
+                    # add edge nodes to queue
+                    self.queue.put(t)
 
     def _process_queue(self):
         """Overridden in subclasses."""
@@ -150,7 +186,7 @@ class TaskQueueSingle(BaseTaskQueue):
 
             # update their results entry with our results
             residx = pendtask.requires[task]
-            pendtask.arg[residx] = retn
+            pendtask.reqresults[residx] = retn
 
             # remove ourselves from their requirements
             del pendtask.requires[task]
@@ -261,7 +297,7 @@ class TaskQueueThread(BaseTaskQueue):
 
                 # update their results entry with our results
                 residx = pendtask.requires[task]
-                pendtask.arg[residx] = retn
+                pendtask.reqresults[residx] = retn
 
                 # without lock, then pendtask could be added twice to
                 # the queue
@@ -305,11 +341,11 @@ def testqueue(taskqueue):
 
     # make a set of tasks which depend on random-like other tasks
     tasks = []
-    for i in range(1000):
-        requires = set()
+    for i in xrange(1000):
+        requires = []
         if len(tasks)>0:
             # always depend on the first task
-            requires = [tasks[0]]
+            requires.append(tasks[0])
             for j in range(min(20, len(tasks)-1)):
                 t = tasks[(j*412591231+13131) % len(tasks)]
                 if t not in requires:
@@ -321,13 +357,13 @@ def testqueue(taskqueue):
     # this task depends on everything
     finaltask = Task(func=testfunc, args=(0,), requires=tasks)
 
-    taskqueue.add(tasks[0])
+    taskqueue.add(finaltask)
     with taskqueue:
         taskqueue.process(abortpending=True)
 
     # this is a hash of all the previous results
     m = hashlib.md5()
-    for v in finaltask.arg:
+    for v in finaltask.reqresults:
         m.update(v.encode('utf-8'))
     digest = m.hexdigest()
 
