@@ -15,22 +15,23 @@ Jeremy Sanders. It should be compatible with Python 2.6+ and Python
 For more documentation see
   http://taskproc.readthedocs.org/
 
-This simple example prints 1, waits 5 seconds, prints 2 and 3, waits 5
-seconds, then prints 4.
+This simple example using two threads, prints 1, waits 5 seconds,
+prints 2 and 3, waits 5 seconds, then prints 4 and waits 5 seconds.
 
-  import time
-  import taskproc
+from __future__ import print_function
+import time
+import taskproc
 
-  def taskfunc(dep_results, num):
-      print(num)
-      time.sleep(5)
+def taskfunc(dep_results, num):
+    print(num)
+    time.sleep(5)
 
-  task1 = taskproc.Task(func=taskfunc, args=(1,))
-  task2 = taskproc.Task(func=taskfunc, args=(2,), requires=[task1])
-  task3 = taskproc.Task(func=taskfunc, args=(3,), requires=[task1])
-  task4 = taskproc.Task(func=taskfunc, args=(4,), requires=[task1,task2])
+task1 = taskproc.Task(func=taskfunc, args=(1,))
+task2 = taskproc.Task(func=taskfunc, args=(2,), requires=[task1])
+task3 = taskproc.Task(func=taskfunc, args=(3,), requires=[task1])
+task4 = taskproc.Task(func=taskfunc, args=(4,), requires=[task1,task2])
 
-  queue = taskproc.TaskQueueThread(2)
-  queue.add(task4)
-  with queue:
-      queue.process()
+queue = taskproc.TaskQueueThread(2)
+queue.add(task4)
+with queue:
+    queue.process()
