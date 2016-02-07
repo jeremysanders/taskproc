@@ -1,0 +1,16 @@
+taskproc (task processor) is a simple Python module designed for
+running a set of tasks which can have dependencies on each other. The
+idea is to have a make-like dependency resolution within a Python
+program. Tasks are queued for execution until their requirements are
+met. When executed, tasks can return a value which is then passed down
+to dependent tasks.
+
+There are two modes of task execution: simple execution of tasks in
+the main program or multi-threaded execution.
+
+taskproc is licensed under the Apache 2.0 license and is copyright
+Jeremy Sanders. It should be compatible with Python 2.6+ and Python
+3.2+.
+
+For more documentation see
+  http://taskproc.readthedocs.org/

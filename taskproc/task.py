@@ -105,7 +105,7 @@ class Task:
     def run(self):
         """Called when task is run. Optionally override this.
 
-        By default runs ``self.func(reqresults, *self.args, **self.kwargs)``
+        By default runs ``self.func(self.reqresults, *self.args, **self.kwargs)``
         """
         if self.func is not None:
             return self.func(self.reqresults, *self.args, **self.kwargs)
