@@ -14,4 +14,4 @@
 
 from common import TaskProcError
 from task import Task
-from taskqueue import TaskQueueSingle, TaskQueueThread
+from taskqueue import TaskQueue, TaskQueueThread

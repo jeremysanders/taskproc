@@ -15,7 +15,8 @@ There are two modes of task execution: simple execution of tasks in
 the main program or multi-threaded execution.
 
 taskproc is licensed under the Apache 2.0 license and is copyright
-Jeremy Sanders.
+Jeremy Sanders. It should be compatible with Python 2.6+ and Python
+3.2+.
 
 Example usage
 -------------
@@ -46,7 +47,7 @@ task1 = taskproc.Task(func=func1)
 task2 = taskproc.Task(func=func2)
 task3 = taskproc.Task(func=func3, requires=[task1, task2])
 
-queue = taskproc.TaskQueueSingle()
+queue = taskproc.TaskQueue()
 queue.add(task3)
 with queue:
     queue.process()

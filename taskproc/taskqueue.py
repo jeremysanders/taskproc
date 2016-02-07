@@ -34,7 +34,11 @@ class BaseTaskQueue:
         self.treelock = threading.Lock()
 
     def add(self, task):
-        """Add task to queue to be processed."""
+        """Add task to queue to be processed.
+
+        :param task: `Task` to add, this should be the `Task` that
+          depends on all other required tasks.
+        """
 
         with self.treelock:
             # Recursively build up queue of edge nodes. Written as a loop
@@ -59,9 +63,8 @@ class BaseTaskQueue:
     def process(self, abortpending=True):
         """Process all items in queue.
 
-        abortpending: if there are encountered tasks with unsatisfied
-                      dependencies at the end, raise a TaskProcError
-
+        :param abortpending: if there are encountered tasks with unsatisfied
+          dependencies at the end, raise a `TaskProcError`
         """
         self._process_queue()
         if self.pending and abortpending:
@@ -74,10 +77,10 @@ class BaseTaskQueue:
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
-class TaskQueueSingle(BaseTaskQueue):
-    """Simple queue where items are processed in the main thread."""
+class TaskQueue(BaseTaskQueue):
+    """Process Tasks in a simple linear way."""
 
-    def _process_next(self):
+    def process_next(self):
         task = self.queue.get()
 
         # tasks with unmet dependencies should not be encountered
@@ -113,19 +116,35 @@ class TaskQueueSingle(BaseTaskQueue):
     def _process_queue(self):
         """Do work of processing."""
         while not self.queue.empty():
-            self._process_next()
+            self.process_next()
 
 class TaskQueueThread(BaseTaskQueue):
-    """A queue of tasks to run which uses multiple threads."""
+    """Process Tasks with multiple threads.
+
+    :param nthreads: number of threads to use
+    :type nthreads: int
+    :param onstart: run this at the start of each thread
+    :type onstart: callable
+    :param onend: run this when finishing each thread
+    :type onend: callable
+
+    When using threads care must be taken if common objects are
+    accessed in the different tasks.
+
+    The recommended way to use this class is to wrap
+    `TaskQueueThread.process()` with a `with` statement which
+    automatically calls start() and stop(), e.g.
+
+    .. code:: python
+
+      q = TaskQueueThread(q)
+      q.add(...)
+      with q:
+          q.process()
+
+    """
 
     def __init__(self, nthreads, onstart=None, onend=None):
-        """Initialise task processing queue using threads.
-
-        nthreads: number of threads
-        onstart: optional function to call on thread start
-        onend: optional function to call on thread end
-        """
-
         BaseTaskQueue.__init__(self)
         self.onstart = onstart
         self.onend = onend
@@ -142,7 +161,8 @@ class TaskQueueThread(BaseTaskQueue):
             ]
 
     def start(self):
-        """Start processing threads."""
+        """Start processing threads. This must be called before `process()` or
+        a `with` statement should be used."""
 
         if self.started is not False:
             raise QueueError("start() can only be called once")
@@ -153,7 +173,8 @@ class TaskQueueThread(BaseTaskQueue):
         self.started = True
 
     def end(self):
-        """End processing threads."""
+        """End processing threads. This should be called before the program
+        ends or a `with` statement should be used."""
 
         assert self.started
 
@@ -237,6 +258,7 @@ class TaskQueueThread(BaseTaskQueue):
 def testqueue(taskqueue):
     """Test that the queue produces the right results in the right order."""
 
+    from task import Task
     import hashlib
 
     def testfunc(res, i):
@@ -280,7 +302,7 @@ def testqueue(taskqueue):
 
 def runtest():
     """Test the different kinds of queue."""
-    testqueue(TaskQueueSingle())
+    testqueue(TaskQueue())
     testqueue(TaskQueueThread(4))
     print('Test success')
 

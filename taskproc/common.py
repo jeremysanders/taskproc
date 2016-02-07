@@ -15,5 +15,8 @@
 from __future__ import print_function
 
 class TaskProcError(RuntimeError):
-    """Exception raised if error encountered in this module."""
+    """Exception raised if error encountered in this module.
+
+    A subclass of `RuntimeError`.
+    """
     pass

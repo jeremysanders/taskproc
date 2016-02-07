@@ -19,24 +19,18 @@ class Task:
     """A Task is a unit of work.
 
     Tasks are run by calling the run() method, which by default calls
-    the callable func passed to the constructor.
+    the callable func passed to the constructor.  Tasks can require
+    other tasks, by passing them in requires when constructing, or by
+    using add_requirement.
 
-    Tasks can require other tasks, by passing them in requires when
-    constructing, or by using add_requirement. This constructs a tree
-    or graph of tasks.
-
-    Members:
-    func: function to call if set
-    args: extra arguments to func
-    kwargs: extra keyword arguments to func
-
-    The following members should not be modified:
-
-    requires: remaining list of tasks required by this task
-    reqresults: filled list of results preduced by tasks that
-                this task requires
-    pendingon: set of tasks which require this task
-
+    :param func: what to run for task
+    :type func: function
+    :param requires: tasks required before this task
+    :type requires: list of Task
+    :param args: additional arguments to pass to `func`
+    :type args: tuple
+    :param kwargs: additional keyword arguments to pass to `func`
+    :type kwargs: dict
     """
 
     # use empty to mark empty results as None is a valid result
@@ -45,17 +39,6 @@ class Task:
     empty = _Empty()
 
     def __init__(self, func=None, requires=[], args=(), kwargs={}):
-        """Construct Task
-
-        func: optional function to call. This function receives as its
-              parameter a list of the results of all of its
-              requirements. Optionally arguments args and keyword
-              arguments kwargs are also parameters.
-
-        args: arguments appended to task function call
-        kwargs: keyword arguments appended to task function call.
-
-        """
 
         # keep track of tasks we require first. These are mapped to
         # indices into the return result array to preserve ordering
@@ -66,17 +49,18 @@ class Task:
             else:
                 self.requires[req] = i
 
-        # these are the Tasks pending on this task
+        #: `Task` objects pending on completion of this task (set)
         self.pendingon = set()
 
-        # results from our requirements
+        #: results of processed required tasks (list)
         self.reqresults = [Task.empty]*len(requires)
 
-        # function to call
+        #: call by `run()` by default when task executed (function or callable)
         self.func = func
 
-        # extra arguments for function
+        #: additional arguments passed to `func` (tuple)
         self.args = args
+        #: additional keyword arguments passed to `func` (dict)
         self.kwargs = kwargs
 
         # requirements need to know we require them
@@ -98,6 +82,9 @@ class Task:
     def add_requirement(self, req):
         """Add a requirement task to this task.
 
+        :param req: add as requirement to run before this `Task`
+        :type req: Task
+
         Note: do not add to the requirements if this task has already
         been added to a TaskQueue, unless you know that it has other
         requirements which have not been met. The task may have
@@ -118,7 +105,7 @@ class Task:
     def run(self):
         """Called when task is run. Optionally override this.
 
-        By default runs self.func(reqresults, *self.args, **self.kwargs)
+        By default runs ``self.func(reqresults, *self.args, **self.kwargs)``
         """
         if self.func is not None:
             return self.func(self.reqresults, *self.args, **self.kwargs)
