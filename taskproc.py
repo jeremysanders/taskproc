@@ -46,7 +46,7 @@ class Task:
     requires: remaining list of tasks required by this task
     reqresults: filled list of results preduced by tasks that
                 this task requires
-    pending: set of tasks which require this task
+    pendingon: set of tasks which require this task
 
     """
 
@@ -78,7 +78,7 @@ class Task:
                 self.requires[req] = i
 
         # these are the Tasks pending on this task
-        self.pending = set()
+        self.pendingon = set()
 
         # results from our requirements
         self.reqresults = [Task.empty]*len(requires)
@@ -92,7 +92,7 @@ class Task:
 
         # requirements need to know we require them
         for rq in requires:
-            rq.pending.add(self)
+            rq.pendingon.add(self)
 
     def __repr__(self):
         """Brief description of Task."""
@@ -107,13 +107,24 @@ class Task:
         return '<%s>' % (', '.join(parts))
 
     def add_requirement(self, req):
-        """Add a requirement task to this task."""
+        """Add a requirement task to this task.
+
+        Note: do not add to the requirements if this task has already
+        been added to a TaskQueue, unless you know that it has other
+        requirements which have not been met. The task may have
+        already been queued for execution.
+
+        Changing the requirements of a task after it has been added
+        means that the TaskQueue will not detect required tasks with
+        unmet dependencies at the end of run.
+
+        """
         if req in self.requires:
             raise TaskProcError("Duplicate requirement found")
 
         self.requires[req] = len(self.reqresults)
         self.reqresults.append(Task.empty)
-        req.pending.add(self)
+        req.pendingon.add(self)
 
     def run(self):
         """Called when task is run. Optionally override this.
@@ -157,7 +168,7 @@ class BaseTaskQueue:
         """Overridden in subclasses."""
         pass
 
-    def process(self, abortpending=False):
+    def process(self, abortpending=True):
         """Process all items in queue.
 
         abortpending: if there are encountered tasks with unsatisfied
@@ -191,7 +202,7 @@ class TaskQueueSingle(BaseTaskQueue):
         self.pending.remove(task)
 
         # for tasks which require this task
-        for pendtask in task.pending:
+        for pendtask in task.pendingon:
             # add to pending
             self.pending.add(pendtask)
 
@@ -207,7 +218,7 @@ class TaskQueueSingle(BaseTaskQueue):
                 self.queue.put(pendtask)
 
         # avoid dependency loops
-        task.pending.clear()
+        task.pendingon.clear()
 
         self.queue.task_done()
 
@@ -300,7 +311,7 @@ class TaskQueueThread(BaseTaskQueue):
                 self.pending.remove(task)
 
                 # for tasks which require this task
-                for pendtask in task.pending:
+                for pendtask in task.pendingon:
                     # add to pending
                     self.pending.add(pendtask)
 
@@ -319,7 +330,7 @@ class TaskQueueThread(BaseTaskQueue):
 
             # avoid dependency loops by removing references to other
             # tasks
-            task.pending.clear()
+            task.pendingon.clear()
 
             # tell queue that we're done and it's safe to exit if all
             # items have been processed
@@ -368,7 +379,7 @@ def testqueue(taskqueue):
 
     taskqueue.add(finaltask)
     with taskqueue:
-        taskqueue.process(abortpending=True)
+        taskqueue.process()
 
     # this is a hash of all the previous results
     m = hashlib.md5()
