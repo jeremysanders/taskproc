@@ -1,3 +1,9 @@
+taskproc
+--------
+
+Github URL:      https://github.com/jeremysanders/taskproc
+Documentation:   http://taskproc.readthedocs.org/
+
 taskproc (task processor) is a simple Python module designed for
 running a set of tasks which can have dependencies on each other. The
 idea is to have a make-like dependency resolution within a Python
@@ -12,11 +18,12 @@ taskproc is licensed under the Apache 2.0 license and is copyright
 Jeremy Sanders. It should be compatible with Python 2.6+ and Python
 3.2+.
 
-For more documentation see
-  http://taskproc.readthedocs.org/
+Example
+-------
 
 This simple example using two threads, prints 1, waits 5 seconds,
 prints 2 and 3, waits 5 seconds, then prints 4 and waits 5 seconds.
+
 
 from __future__ import print_function
 import time
