@@ -97,9 +97,6 @@ class TaskQueue(BaseTaskQueue):
 
         # for tasks which require this task
         for pendtask in task.pendingon:
-            # add to pending
-            self.pending.add(pendtask)
-
             # update their results entry with our results
             residx = pendtask.requires[task]
             pendtask.reqresults[residx] = retn
@@ -108,7 +105,8 @@ class TaskQueue(BaseTaskQueue):
             del pendtask.requires[task]
 
             # if they have empty requirements, add to tasks to run
-            if not pendtask.requires:
+            # (providing they have been discovered in the tree search)
+            if pendtask in self.pending and not pendtask.requires:
                 self.queue.put(pendtask)
 
         # avoid dependency loops
@@ -224,9 +222,6 @@ class TaskQueueThread(BaseTaskQueue):
 
                 # for tasks which require this task
                 for pendtask in task.pendingon:
-                    # add to pending
-                    self.pending.add(pendtask)
-
                     # update their results entry with our results
                     residx = pendtask.requires[task]
                     pendtask.reqresults[residx] = retn
@@ -235,7 +230,7 @@ class TaskQueueThread(BaseTaskQueue):
                     del pendtask.requires[task]
 
                     # if they have empty requirements, add to tasks to run
-                    if not pendtask.requires:
+                    if pendtask in self.pending and not pendtask.requires:
                         self.queue.put(pendtask)
 
             # avoid dependency loops by removing references to other
